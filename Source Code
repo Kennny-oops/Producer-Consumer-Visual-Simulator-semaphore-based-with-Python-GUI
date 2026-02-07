@@ -1,0 +1,306 @@
+import tkinter as tk
+from tkinter import ttk
+import threading
+import time
+import queue
+from collections import deque
+
+class ProducerConsumerSimulator:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Producer-Consumer Simulator (Semaphore Based)")
+        self.root.geometry("900x700")
+        self.root.configure(bg="#f0f0f0")
+        
+        # Buffer and synchronization
+        self.buffer_size = 10
+        self.buffer = deque()
+        self.mutex = threading.Semaphore(1)  # Binary semaphore for mutual exclusion
+        self.empty = threading.Semaphore(self.buffer_size)  # Count empty slots
+        self.full = threading.Semaphore(0)  # Count full slots
+        
+        # Statistics
+        self.items_produced = 0
+        self.items_consumed = 0
+        self.producer_wait_count = 0
+        self.consumer_wait_count = 0
+        
+        # Control flags
+        self.running = False
+        self.producer_speed = 1.0
+        self.consumer_speed = 1.0
+        
+        # GUI elements
+        self.setup_gui()
+        
+    def setup_gui(self):
+        # Title
+        title_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
+        title_frame.pack(fill=tk.X)
+        title_frame.pack_propagate(False)
+        
+        title_label = tk.Label(title_frame, text="Producer-Consumer Problem Simulator", 
+                              font=("Arial", 18, "bold"), bg="#2c3e50", fg="white")
+        title_label.pack(pady=15)
+        
+        # Main container
+        main_frame = tk.Frame(self.root, bg="#f0f0f0")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Buffer visualization
+        buffer_frame = tk.LabelFrame(main_frame, text="Buffer (Shared Resource)", 
+                                    font=("Arial", 12, "bold"), bg="white", padx=10, pady=10)
+        buffer_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        self.buffer_canvas = tk.Canvas(buffer_frame, height=80, bg="white", highlightthickness=0)
+        self.buffer_canvas.pack(fill=tk.X, pady=5)
+        
+        # Semaphore status
+        sem_frame = tk.LabelFrame(main_frame, text="Semaphore Status", 
+                                 font=("Arial", 12, "bold"), bg="white", padx=10, pady=10)
+        sem_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        sem_grid = tk.Frame(sem_frame, bg="white")
+        sem_grid.pack()
+        
+        tk.Label(sem_grid, text="Mutex:", font=("Arial", 10, "bold"), bg="white").grid(row=0, column=0, sticky="w", padx=5)
+        self.mutex_label = tk.Label(sem_grid, text="1", font=("Arial", 10), bg="white", fg="#27ae60")
+        self.mutex_label.grid(row=0, column=1, sticky="w", padx=5)
+        
+        tk.Label(sem_grid, text="Empty Slots:", font=("Arial", 10, "bold"), bg="white").grid(row=0, column=2, sticky="w", padx=20)
+        self.empty_label = tk.Label(sem_grid, text=str(self.buffer_size), font=("Arial", 10), bg="white", fg="#3498db")
+        self.empty_label.grid(row=0, column=3, sticky="w", padx=5)
+        
+        tk.Label(sem_grid, text="Full Slots:", font=("Arial", 10, "bold"), bg="white").grid(row=0, column=4, sticky="w", padx=20)
+        self.full_label = tk.Label(sem_grid, text="0", font=("Arial", 10), bg="white", fg="#e74c3c")
+        self.full_label.grid(row=0, column=5, sticky="w", padx=5)
+        
+        # Statistics
+        stats_frame = tk.LabelFrame(main_frame, text="Statistics", 
+                                   font=("Arial", 12, "bold"), bg="white", padx=10, pady=10)
+        stats_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        stats_grid = tk.Frame(stats_frame, bg="white")
+        stats_grid.pack()
+        
+        tk.Label(stats_grid, text="Items Produced:", font=("Arial", 10), bg="white").grid(row=0, column=0, sticky="w", padx=5)
+        self.produced_label = tk.Label(stats_grid, text="0", font=("Arial", 10, "bold"), bg="white", fg="#27ae60")
+        self.produced_label.grid(row=0, column=1, sticky="w", padx=5)
+        
+        tk.Label(stats_grid, text="Items Consumed:", font=("Arial", 10), bg="white").grid(row=0, column=2, sticky="w", padx=20)
+        self.consumed_label = tk.Label(stats_grid, text="0", font=("Arial", 10, "bold"), bg="white", fg="#e74c3c")
+        self.consumed_label.grid(row=0, column=3, sticky="w", padx=5)
+        
+        tk.Label(stats_grid, text="Producer Waits:", font=("Arial", 10), bg="white").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.producer_wait_label = tk.Label(stats_grid, text="0", font=("Arial", 10), bg="white")
+        self.producer_wait_label.grid(row=1, column=1, sticky="w", padx=5)
+        
+        tk.Label(stats_grid, text="Consumer Waits:", font=("Arial", 10), bg="white").grid(row=1, column=2, sticky="w", padx=20, pady=5)
+        self.consumer_wait_label = tk.Label(stats_grid, text="0", font=("Arial", 10), bg="white")
+        self.consumer_wait_label.grid(row=1, column=3, sticky="w", padx=5)
+        
+        # Activity log
+        log_frame = tk.LabelFrame(main_frame, text="Activity Log", 
+                                 font=("Arial", 12, "bold"), bg="white", padx=10, pady=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        self.log_text = tk.Text(log_frame, height=10, font=("Courier", 9), bg="#f9f9f9", 
+                               state=tk.DISABLED, wrap=tk.WORD)
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.config(yscrollcommand=scrollbar.set)
+        
+        # Control panel
+        control_frame = tk.LabelFrame(main_frame, text="Controls", 
+                                     font=("Arial", 12, "bold"), bg="white", padx=10, pady=10)
+        control_frame.pack(fill=tk.X)
+        
+        # Speed controls
+        speed_frame = tk.Frame(control_frame, bg="white")
+        speed_frame.pack(pady=5)
+        
+        tk.Label(speed_frame, text="Producer Speed:", font=("Arial", 9), bg="white").grid(row=0, column=0, padx=5)
+        self.producer_speed_scale = tk.Scale(speed_frame, from_=0.5, to=3.0, resolution=0.5, 
+                                            orient=tk.HORIZONTAL, bg="white", length=150)
+        self.producer_speed_scale.set(1.0)
+        self.producer_speed_scale.grid(row=0, column=1, padx=5)
+        
+        tk.Label(speed_frame, text="Consumer Speed:", font=("Arial", 9), bg="white").grid(row=0, column=2, padx=20)
+        self.consumer_speed_scale = tk.Scale(speed_frame, from_=0.5, to=3.0, resolution=0.5, 
+                                            orient=tk.HORIZONTAL, bg="white", length=150)
+        self.consumer_speed_scale.set(1.0)
+        self.consumer_speed_scale.grid(row=0, column=3, padx=5)
+        
+        # Buttons
+        button_frame = tk.Frame(control_frame, bg="white")
+        button_frame.pack(pady=10)
+        
+        self.start_button = tk.Button(button_frame, text="Start Simulation", font=("Arial", 10, "bold"),
+                                      bg="#27ae60", fg="white", padx=20, pady=8,
+                                      command=self.start_simulation, cursor="hand2")
+        self.start_button.grid(row=0, column=0, padx=5)
+        
+        self.stop_button = tk.Button(button_frame, text="Stop Simulation", font=("Arial", 10, "bold"),
+                                     bg="#e74c3c", fg="white", padx=20, pady=8,
+                                     command=self.stop_simulation, state=tk.DISABLED, cursor="hand2")
+        self.stop_button.grid(row=0, column=1, padx=5)
+        
+        self.reset_button = tk.Button(button_frame, text="Reset", font=("Arial", 10, "bold"),
+                                      bg="#3498db", fg="white", padx=20, pady=8,
+                                      command=self.reset_simulation, cursor="hand2")
+        self.reset_button.grid(row=0, column=2, padx=5)
+        
+        # Initial buffer draw
+        self.draw_buffer()
+        
+    def draw_buffer(self):
+        self.buffer_canvas.delete("all")
+        width = self.buffer_canvas.winfo_width()
+        if width <= 1:
+            width = 800
+        
+        slot_width = (width - 40) / self.buffer_size
+        slot_height = 60
+        start_x = 20
+        start_y = 10
+        
+        for i in range(self.buffer_size):
+            x1 = start_x + i * slot_width
+            x2 = x1 + slot_width - 5
+            
+            if i < len(self.buffer):
+                color = "#3498db"
+                self.buffer_canvas.create_rectangle(x1, start_y, x2, start_y + slot_height, 
+                                                   fill=color, outline="#2980b9", width=2)
+                self.buffer_canvas.create_text((x1 + x2) / 2, start_y + slot_height / 2,
+                                             text=str(self.buffer[i]), font=("Arial", 12, "bold"), 
+                                             fill="white")
+            else:
+                self.buffer_canvas.create_rectangle(x1, start_y, x2, start_y + slot_height, 
+                                                   fill="white", outline="#bdc3c7", width=2)
+                self.buffer_canvas.create_text((x1 + x2) / 2, start_y + slot_height / 2,
+                                             text="—", font=("Arial", 14), fill="#bdc3c7")
+    
+    def log_activity(self, message, color="#000000"):
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, f"{message}\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+    
+    def producer(self):
+        while self.running:
+            time.sleep(2.0 / self.producer_speed_scale.get())
+            
+            # Check if buffer is full
+            if len(self.buffer) >= self.buffer_size:
+                self.producer_wait_count += 1
+                self.root.after(0, self.update_stats)
+                self.log_activity("⏳ Producer waiting... (Buffer full)", "#e67e22")
+            
+            self.empty.acquire()  # Wait for empty slot
+            self.mutex.acquire()  # Enter critical section
+            
+            # Produce item
+            item = self.items_produced + 1
+            self.buffer.append(item)
+            self.items_produced += 1
+            
+            self.root.after(0, self.draw_buffer)
+            self.root.after(0, self.update_semaphore_display)
+            self.root.after(0, self.update_stats)
+            self.log_activity(f"✓ Producer created item #{item}", "#27ae60")
+            
+            self.mutex.release()  # Exit critical section
+            self.full.release()  # Signal full slot available
+    
+    def consumer(self):
+        while self.running:
+            time.sleep(2.0 / self.consumer_speed_scale.get())
+            
+            # Check if buffer is empty
+            if len(self.buffer) == 0:
+                self.consumer_wait_count += 1
+                self.root.after(0, self.update_stats)
+                self.log_activity("⏳ Consumer waiting... (Buffer empty)", "#e67e22")
+            
+            self.full.acquire()  # Wait for full slot
+            self.mutex.acquire()  # Enter critical section
+            
+            # Consume item
+            item = self.buffer.popleft()
+            self.items_consumed += 1
+            
+            self.root.after(0, self.draw_buffer)
+            self.root.after(0, self.update_semaphore_display)
+            self.root.after(0, self.update_stats)
+            self.log_activity(f"✗ Consumer removed item #{item}", "#e74c3c")
+            
+            self.mutex.release()  # Exit critical section
+            self.empty.release()  # Signal empty slot available
+    
+    def update_semaphore_display(self):
+        # Note: We can't directly get semaphore values, so we calculate them
+        empty_count = self.buffer_size - len(self.buffer)
+        full_count = len(self.buffer)
+        
+        self.empty_label.config(text=str(empty_count))
+        self.full_label.config(text=str(full_count))
+        self.mutex_label.config(text="Locked" if len(self.buffer) == 0 else "Available")
+    
+    def update_stats(self):
+        self.produced_label.config(text=str(self.items_produced))
+        self.consumed_label.config(text=str(self.items_consumed))
+        self.producer_wait_label.config(text=str(self.producer_wait_count))
+        self.consumer_wait_label.config(text=str(self.consumer_wait_count))
+    
+    def start_simulation(self):
+        if not self.running:
+            self.running = True
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL)
+            
+            self.log_activity("🚀 Simulation started!", "#2c3e50")
+            
+            # Start producer and consumer threads
+            threading.Thread(target=self.producer, daemon=True).start()
+            threading.Thread(target=self.consumer, daemon=True).start()
+    
+    def stop_simulation(self):
+        if self.running:
+            self.running = False
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+            self.log_activity("⏸ Simulation stopped!", "#2c3e50")
+    
+    def reset_simulation(self):
+        self.stop_simulation()
+        
+        # Reset buffer and semaphores
+        self.buffer.clear()
+        self.mutex = threading.Semaphore(1)
+        self.empty = threading.Semaphore(self.buffer_size)
+        self.full = threading.Semaphore(0)
+        
+        # Reset statistics
+        self.items_produced = 0
+        self.items_consumed = 0
+        self.producer_wait_count = 0
+        self.consumer_wait_count = 0
+        
+        # Reset GUI
+        self.draw_buffer()
+        self.update_semaphore_display()
+        self.update_stats()
+        
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.DISABLED)
+        
+        self.log_activity("🔄 Simulation reset!", "#2c3e50")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ProducerConsumerSimulator(root)
+    root.mainloop()
